@@ -1,0 +1,14 @@
+D:\Proyects\c#\snipC\src\bin\Debug\net8.0-windows\snipC.exe
+D:\Proyects\c#\snipC\src\bin\Debug\net8.0-windows\snipC.deps.json
+D:\Proyects\c#\snipC\src\bin\Debug\net8.0-windows\snipC.runtimeconfig.json
+D:\Proyects\c#\snipC\src\bin\Debug\net8.0-windows\snipC.dll
+D:\Proyects\c#\snipC\src\bin\Debug\net8.0-windows\snipC.pdb
+D:\Proyects\c#\snipC\src\obj\Debug\net8.0-windows\snipC.GeneratedMSBuildEditorConfig.editorconfig
+D:\Proyects\c#\snipC\src\obj\Debug\net8.0-windows\snipC.AssemblyInfoInputs.cache
+D:\Proyects\c#\snipC\src\obj\Debug\net8.0-windows\snipC.AssemblyInfo.cs
+D:\Proyects\c#\snipC\src\obj\Debug\net8.0-windows\snipC.csproj.CoreCompileInputs.cache
+D:\Proyects\c#\snipC\src\obj\Debug\net8.0-windows\snipC.dll
+D:\Proyects\c#\snipC\src\obj\Debug\net8.0-windows\refint\snipC.dll
+D:\Proyects\c#\snipC\src\obj\Debug\net8.0-windows\snipC.pdb
+D:\Proyects\c#\snipC\src\obj\Debug\net8.0-windows\snipC.genruntimeconfig.cache
+D:\Proyects\c#\snipC\src\obj\Debug\net8.0-windows\ref\snipC.dll

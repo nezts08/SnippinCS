@@ -1,0 +1,7 @@
+{
+  "trigger_key": 9,
+  "trigger_key_name": "TAB",
+  "commands": {
+    "ejemplo": "Texto de prueba"
+  }
+}

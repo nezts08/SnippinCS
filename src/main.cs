@@ -4,7 +4,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace SnippinCS
-{    public class Config
+{
+    public class Config
     {
         [JsonPropertyName("trigger_key")]
         public ushort TriggerKey { get; set; } = 9;
@@ -12,9 +13,25 @@ namespace SnippinCS
         [JsonPropertyName("trigger_key_name")]
         public string TriggerKeyName { get; set; } = "TAB";
 
+        [JsonPropertyName("trigger_modifiers")]
+        public int TriggerModifiers { get; set; } = 0;
+
+        [JsonPropertyName("snippet_dates")]
+        public Dictionary<string, SnippetDates> SnippetDates { get; set; } =
+            new(StringComparer.OrdinalIgnoreCase);
+
         [JsonPropertyName("commands")]
         public Dictionary<string, string> Commands { get; set; } =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public class SnippetDates
+    {
+        [JsonPropertyName("created_at")]
+        public DateTime CreatedAt { get; set; }
+
+        [JsonPropertyName("modified_at")]
+        public DateTime ModifiedAt { get; set; }
     }
 
     public static class Program
@@ -61,12 +78,22 @@ namespace SnippinCS
         private Label rightTitle;
         private Button btnSave;
         private Button btnDelete;
+        private TextBox txtSearch;
+        private ComboBox comboSort;
+        private bool refreshingList;
+        private string editingKey;
+        private const int WM_SYSKEYDOWN = 0x0104;
+        private const int LLKHF_INJECTED = 0x10;
+        private const int MOD_CTRL = 1;
+        private const int MOD_ALT = 2;
+        private const int MOD_SHIFT = 4;
+        private const int MOD_WIN = 8;
 
         public MainForm()
         {
             LoadConfig();
             InitializeUI();
-            
+
             _hookID = SetHook(_proc);
             this.FormClosing += (s, e) => UnhookWindowsHookEx(_hookID);
         }
@@ -91,7 +118,7 @@ namespace SnippinCS
             Panel leftPanel = new Panel
             {
                 Dock = DockStyle.Left,
-                Width = 240,
+                Width = 295,
                 BackColor = bgDark,
             };
 
@@ -153,10 +180,51 @@ namespace SnippinCS
                 IntegralHeight = false,
             };
 
-            UpdateCommandList();
+            Panel filterPanel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 94,
+                Padding = new Padding(10, 5, 10, 5),
+                BackColor = bgDark,
+            };
+            txtSearch = new TextBox
+            {
+                Dock = DockStyle.Top,
+                PlaceholderText = "Buscar snippets...",
+                BackColor = inputDark,
+                ForeColor = textLight,
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = new Font("Segoe UI", 10F),
+            };
+            comboSort = new ComboBox
+            {
+                Dock = DockStyle.Bottom,
+                Height = 30,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = inputDark,
+                ForeColor = textLight,
+                FlatStyle = FlatStyle.Flat,
+            };
+            comboSort.Items.AddRange(
+                new object[]
+                {
+                    "Nombre (A-Z)",
+                    "Nombre (Z-A)",
+                    "Recien creado",
+                    "Mas antiguo",
+                    "Recien modificado",
+                }
+            );
+            comboSort.SelectedIndex = 0;
+            filterPanel.Controls.Add(txtSearch);
+            filterPanel.Controls.Add(comboSort);
+            txtSearch.TextChanged += (s, e) => UpdateCommandList();
+            comboSort.SelectedIndexChanged += (s, e) => UpdateCommandList();
 
             leftPanel.Controls.Add(listCommands);
+            leftPanel.Controls.Add(filterPanel);
             leftPanel.Controls.Add(leftHeader);
+            UpdateCommandList();
 
             Panel rightPanel = new Panel
             {
@@ -294,10 +362,11 @@ namespace SnippinCS
 
             listCommands.SelectedIndexChanged += (s, e) =>
             {
-                if (listCommands.SelectedItem == null)
+                if (refreshingList || listCommands.SelectedItem == null)
                     return;
 
                 string key = listCommands.SelectedItem.ToString()!;
+                editingKey = key;
 
                 txtKey.Text = key;
                 txtKey.Enabled = false;
@@ -312,6 +381,7 @@ namespace SnippinCS
             btnAdd.Click += (s, e) =>
             {
                 listCommands.ClearSelected();
+                editingKey = null;
 
                 txtKey.Enabled = true;
                 txtKey.BackColor = inputDark;
@@ -325,32 +395,43 @@ namespace SnippinCS
 
             btnSave.Click += (s, e) =>
             {
-                if (
-                    !string.IsNullOrWhiteSpace(txtKey.Text)
-                    && !string.IsNullOrWhiteSpace(txtValue.Text)
-                )
+                string key = txtKey.Text.Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(txtValue.Text))
                 {
-                    config.Commands[txtKey.Text.ToLower()] = txtValue.Text;
-
-                    SaveConfig();
-                    UpdateCommandList();
-
-                    btnAdd.PerformClick();
+                    MessageBox.Show("Completa el comando y el texto expandido.", "SnippinC#");
+                    return;
                 }
+                if (key.Any(c => !char.IsLetterOrDigit(c)))
+                {
+                    MessageBox.Show(
+                        "El comando solo puede contener letras y numeros.",
+                        "SnippinC#"
+                    );
+                    return;
+                }
+
+                config.Commands[key] = txtValue.Text;
+                DateTime now = DateTime.UtcNow;
+                if (!config.SnippetDates.TryGetValue(key, out SnippetDates dates))
+                    dates = new SnippetDates { CreatedAt = now };
+                if (dates.CreatedAt == default)
+                    dates.CreatedAt = now;
+                dates.ModifiedAt = now;
+                config.SnippetDates[key] = dates;
+                SaveConfig();
+                UpdateCommandList();
+                btnAdd.PerformClick();
             };
 
             btnDelete.Click += (s, e) =>
             {
-                string key = txtKey.Text.ToLower();
-
-                if (config.Commands.ContainsKey(key))
+                string key = editingKey ?? txtKey.Text.Trim().ToLowerInvariant();
+                if (config.Commands.Remove(key))
                 {
-                    config.Commands.Remove(key);
-
+                    config.SnippetDates.Remove(key);
                     SaveConfig();
-                    UpdateCommandList();
-
                     btnAdd.PerformClick();
+                    UpdateCommandList();
                 }
             };
 
@@ -364,73 +445,175 @@ namespace SnippinCS
             Color textLight = Color.FromArgb(241, 241, 241);
             Color accentBlue = Color.FromArgb(0, 122, 204);
 
-            Form modal = new Form
+            using Form modal = new Form
             {
-                Text = "Configuración",
-                Size = new Size(320, 220),
+                Text = "Configuracion de activacion",
+                Size = new Size(410, 265),
                 StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false,
                 MinimizeBox = false,
                 BackColor = bgDark,
                 ForeColor = textLight,
+                KeyPreview = true,
             };
-
-            Label lblInfo = new Label
+            Label info = new Label
             {
-                Text = "Selecciona la tecla de activación:",
-                Location = new Point(25, 25),
-                AutoSize = true,
-                Font = new Font("Segoe UI", 10F),
+                Text = "Pulsa 'Grabar' y presiona la combinacion deseada:",
+                Location = new Point(20, 20),
+                Size = new Size(360, 26),
             };
-
-            ComboBox combo = new ComboBox
+            TextBox display = new TextBox
             {
-                Location = new Point(25, 60),
-                Width = 250,
-                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(20, 54),
+                Width = 350,
+                ReadOnly = true,
+                BackColor = inputDark,
+                ForeColor = textLight,
+                Text = FormatShortcut(config.TriggerKey, config.TriggerModifiers),
+            };
+            Button record = new Button
+            {
+                Text = "Grabar combinacion",
+                Location = new Point(20, 92),
+                Size = new Size(350, 35),
                 BackColor = inputDark,
                 ForeColor = textLight,
                 FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 11F),
             };
-            combo.Items.AddRange(KeyMap.Keys.ToArray());
-            combo.SelectedItem = config.TriggerKeyName;
-
-            Button btnClose = new Button
+            Button save = new Button
             {
                 Text = "Guardar cambios",
-                Location = new Point(25, 115),
-                Width = 250,
-                Height = 40,
-                FlatStyle = FlatStyle.Flat,
+                Location = new Point(20, 150),
+                Size = new Size(350, 38),
                 BackColor = accentBlue,
                 ForeColor = Color.White,
-                Cursor = Cursors.Hand,
-                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                FlatStyle = FlatStyle.Flat,
             };
-            btnClose.FlatAppearance.BorderSize = 0;
+            Keys recordedKey = (Keys)config.TriggerKey;
+            int recordedMods = config.TriggerModifiers;
+            bool isRecording = false;
 
-            btnClose.Click += (s, e) =>
+            record.Click += (s, e) =>
             {
-                if (combo.SelectedItem != null)
+                isRecording = true;
+                display.Text = "Presiona tu combinacion...";
+                record.Text = "Grabando...";
+                modal.ActiveControl = record;
+            };
+            KeyEventHandler captureShortcut = (s, e) =>
+            {
+                if (!isRecording)
+                    return;
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                Keys key = e.KeyCode;
+                if (
+                    key == Keys.ControlKey
+                    || key == Keys.ShiftKey
+                    || key == Keys.Menu
+                    || key == Keys.LWin
+                    || key == Keys.RWin
+                )
+                    return;
+                int mods =
+                    (e.Control ? MOD_CTRL : 0)
+                    | (e.Alt ? MOD_ALT : 0)
+                    | (e.Shift ? MOD_SHIFT : 0)
+                    | ((GetAsyncKeyState(0x5B) < 0 || GetAsyncKeyState(0x5C) < 0) ? MOD_WIN : 0);
+                if (key == Keys.Escape)
                 {
-                    config.TriggerKeyName = combo.SelectedItem.ToString()!;
-                    config.TriggerKey = KeyMap[config.TriggerKeyName];
-                    SaveConfig();
+                    isRecording = false;
+                    record.Text = "Grabar combinacion";
+                    display.Text = FormatShortcut(config.TriggerKey, config.TriggerModifiers);
+                    return;
                 }
+                if (mods == 0 && key != Keys.Tab && (key < Keys.F1 || key > Keys.F24))
+                {
+                    display.Text = "Usa Ctrl/Alt/Shift/Win, o TAB/F1-F24";
+                    return;
+                }
+                recordedKey = key;
+                recordedMods = mods;
+                display.Text = FormatShortcut((ushort)key, mods);
+                isRecording = false;
+                record.Text = "Grabar combinacion";
+            };
+            modal.KeyDown += captureShortcut;
+            record.KeyDown += captureShortcut;
+            record.PreviewKeyDown += (s, e) =>
+            {
+                if (isRecording)
+                    e.IsInputKey = true;
+            };
+            save.Click += (s, e) =>
+            {
+                if (isRecording)
+                    return;
+                config.TriggerKey = (ushort)recordedKey;
+                config.TriggerModifiers = recordedMods;
+                config.TriggerKeyName = FormatShortcut(config.TriggerKey, config.TriggerModifiers);
+                SaveConfig();
+                buffer = "";
                 modal.Close();
             };
-
-            modal.Controls.AddRange(new Control[] { lblInfo, combo, btnClose });
+            modal.Controls.AddRange(new Control[] { info, display, record, save });
             modal.ShowDialog(this);
+        }
+
+        private static string FormatShortcut(ushort key, int mods)
+        {
+            var pieces = new List<string>();
+            if ((mods & MOD_CTRL) != 0)
+                pieces.Add("Ctrl");
+            if ((mods & MOD_ALT) != 0)
+                pieces.Add("Alt");
+            if ((mods & MOD_SHIFT) != 0)
+                pieces.Add("Shift");
+            if ((mods & MOD_WIN) != 0)
+                pieces.Add("Win");
+            pieces.Add(((Keys)key).ToString());
+            return string.Join(" + ", pieces);
         }
 
         private void UpdateCommandList()
         {
-            var keys = config.Commands.Keys.OrderBy(k => k).ToArray();
-            listCommands.Items.Clear();
-            listCommands.Items.AddRange(keys);
+            if (listCommands == null || config == null)
+                return;
+            string selected = listCommands.SelectedItem as string;
+            string query = txtSearch?.Text?.Trim() ?? "";
+            IEnumerable<string> keys = config.Commands.Keys.Where(k =>
+                k.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || config.Commands[k].Contains(query, StringComparison.OrdinalIgnoreCase)
+            );
+            Func<string, DateTime> created = k =>
+                config.SnippetDates.TryGetValue(k, out var d) ? d.CreatedAt : DateTime.MinValue;
+            Func<string, DateTime> modified = k =>
+                config.SnippetDates.TryGetValue(k, out var d) ? d.ModifiedAt : DateTime.MinValue;
+            keys = (comboSort?.SelectedIndex ?? 0) switch
+            {
+                1 => keys.OrderByDescending(k => k, StringComparer.OrdinalIgnoreCase),
+                2 => keys.OrderByDescending(created)
+                    .ThenBy(k => k, StringComparer.OrdinalIgnoreCase),
+                3 => keys.OrderBy(created).ThenBy(k => k, StringComparer.OrdinalIgnoreCase),
+                4 => keys.OrderByDescending(modified)
+                    .ThenBy(k => k, StringComparer.OrdinalIgnoreCase),
+                _ => keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase),
+            };
+            refreshingList = true;
+            listCommands.BeginUpdate();
+            try
+            {
+                listCommands.Items.Clear();
+                listCommands.Items.AddRange(keys.Cast<object>().ToArray());
+                if (selected != null && listCommands.Items.Contains(selected))
+                    listCommands.SelectedItem = selected;
+            }
+            finally
+            {
+                listCommands.EndUpdate();
+                refreshingList = false;
+            }
         }
 
         private static void LoadConfig()
@@ -447,11 +630,31 @@ namespace SnippinCS
                         return;
                     }
 
+                    config.SnippetDates ??= new Dictionary<string, SnippetDates>(
+                        StringComparer.OrdinalIgnoreCase
+                    );
+                    config.SnippetDates = new Dictionary<string, SnippetDates>(
+                        config.SnippetDates,
+                        StringComparer.OrdinalIgnoreCase
+                    );
                     if (config.Commands == null)
                     {
                         config.Commands = new Dictionary<string, string>(
                             StringComparer.OrdinalIgnoreCase
                         );
+                    }
+                    config.Commands = new Dictionary<string, string>(
+                        config.Commands,
+                        StringComparer.OrdinalIgnoreCase
+                    );
+                    foreach (var key in config.Commands.Keys)
+                    {
+                        if (!config.SnippetDates.ContainsKey(key))
+                            config.SnippetDates[key] = new SnippetDates
+                            {
+                                CreatedAt = DateTime.MinValue,
+                                ModifiedAt = DateTime.MinValue,
+                            };
                     }
                 }
                 catch
@@ -480,31 +683,76 @@ namespace SnippinCS
             File.WriteAllText(ConfigFile, JsonSerializer.Serialize(config, opts));
         }
 
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int virtualKey);
+
+        private static int CurrentModifiers()
+        {
+            int mods = 0;
+            if (GetAsyncKeyState(0x11) < 0)
+                mods |= MOD_CTRL;
+            if (GetAsyncKeyState(0x12) < 0)
+                mods |= MOD_ALT;
+            if (GetAsyncKeyState(0x10) < 0)
+                mods |= MOD_SHIFT;
+            if (GetAsyncKeyState(0x5B) < 0 || GetAsyncKeyState(0x5C) < 0)
+                mods |= MOD_WIN;
+            return mods;
+        }
+
         private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
+            if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN))
             {
                 int vkCode = Marshal.ReadInt32(lParam);
+                int flags = Marshal.ReadInt32(lParam, 8);
+                if ((flags & LLKHF_INJECTED) != 0)
+                    return CallNextHookEx(_hookID, nCode, wParam, lParam);
 
-                if (ModifierKeys != Keys.None && (vkCode == 32 || vkCode == 8))
+                // No expandir ni capturar comandos dentro de la propia aplicacion.
+                if (IsOwnWindowActive())
                 {
                     buffer = "";
+                    return CallNextHookEx(_hookID, nCode, wParam, lParam);
                 }
-                else if (vkCode == config.TriggerKey)
+
+                int mods = CurrentModifiers();
+                if (vkCode == config.TriggerKey && mods == config.TriggerModifiers)
                 {
-                    string palabra = buffer.ToLower();
-                    if (config.Commands.TryGetValue(palabra, out string textoLargo))
-                    {
-            Task.Run(() => ExecuteCommand(palabra, textoLargo));
-                    }
+                    string word = buffer.ToLowerInvariant();
                     buffer = "";
+                    if (config.Commands.TryGetValue(word, out string expanded))
+                    {
+                        Task.Run(() => ExecuteCommand(word, expanded));
+                        return (IntPtr)1; // No enviar TAB u otra tecla de activacion al editor.
+                    }
+                }
+                else if (
+                    vkCode == 0x10
+                    || vkCode == 0x11
+                    || vkCode == 0x12
+                    || vkCode == 0x5B
+                    || vkCode == 0x5C
+                    || vkCode == 0xA0
+                    || vkCode == 0xA1
+                    || vkCode == 0xA2
+                    || vkCode == 0xA3
+                    || vkCode == 0xA4
+                    || vkCode == 0xA5
+                )
+                {
+                    // Conservar el texto mientras se mantienen los modificadores.
+                }
+                else if (mods != 0)
+                {
+                    // No anexar los caracteres usados en una combinacion.
                 }
                 else if (vkCode == 8)
                 {
                     if (buffer.Length > 0)
                         buffer = buffer[..^1];
                 }
-                else if (vkCode == 32 || vkCode == 13) // Space o Enter
+                else if (vkCode == 32 || vkCode == 13 || vkCode == 9)
                 {
                     buffer = "";
                 }
@@ -515,18 +763,34 @@ namespace SnippinCS
                 )
                 {
                     buffer +=
-                        (vkCode >= 96 && vkCode <= 105)
+                        vkCode >= 96 && vkCode <= 105
                             ? (vkCode - 96).ToString()
-                            : ((char)vkCode).ToString().ToLower();
+                            : ((char)vkCode).ToString().ToLowerInvariant();
+                    if (buffer.Length > 100)
+                        buffer = buffer[^100..];
                 }
+                else
+                    buffer = "";
             }
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+        private static bool IsOwnWindowActive()
+        {
+            GetWindowThreadProcessId(GetForegroundWindow(), out uint pid);
+            return pid == (uint)Environment.ProcessId;
         }
 
         private static void ExecuteCommand(string palabraEnBuffer, string textoLargo)
         {
             Thread.Sleep(100);
-            int totalABorrar = palabraEnBuffer.Length + 1; 
+            int totalABorrar = palabraEnBuffer.Length;
             for (int i = 0; i < totalABorrar; i++)
             {
                 keybd_event(VK_BACK, 0, 0, UIntPtr.Zero);
@@ -541,9 +805,7 @@ namespace SnippinCS
                 {
                     Clipboard.SetText(textoLargo);
                 }
-                catch
-                { 
-                }
+                catch { }
             });
             staThread.SetApartmentState(ApartmentState.STA);
             staThread.Start();

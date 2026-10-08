@@ -677,12 +677,18 @@ namespace SnippinCS
             SaveConfig();
         }
 
-        private static void SaveConfig()
-        {
-            var opts = new JsonSerializerOptions { WriteIndented = true };
-            File.WriteAllText(ConfigFile, JsonSerializer.Serialize(config, opts));
-        }
-
+      private static void SaveConfig()
+{
+    try
+    {
+        var opts = new JsonSerializerOptions { WriteIndented = true };
+        File.WriteAllText(ConfigFile, JsonSerializer.Serialize(config, opts));
+    }
+    catch (Exception ex)
+    {
+        MessageBox.Show($"Error al guardar configuración: {ex.Message}", "SnippinC#");
+    }
+}
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int virtualKey);
 

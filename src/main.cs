@@ -773,7 +773,7 @@ namespace SnippinCS
                             ? (vkCode - 96).ToString()
                             : ((char)vkCode).ToString().ToLowerInvariant();
                     if (buffer.Length > 100)
-                        buffer = buffer[^100..];
+                            buffer = buffer.Substring(buffer.Length - 100);
                 }
                 else
                     buffer = "";
